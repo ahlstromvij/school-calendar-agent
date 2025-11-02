@@ -20,60 +20,70 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
       SCHOOL_EMAILS: ${{ secrets.SCHOOL_EMAILS }}
-
-      GOOGLE_OAUTH_CLIENT_SECRET_PATH: data/client_secret.json
-      GOOGLE_OAUTH_TOKEN_PATH: data/token.json
-
-      FAILED_EVENTS_LOG: data/failed_events.json
+      PYTHONUNBUFFERED: "1"   # flush prints immediately (nice for live logs)
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install uv
+      - name: Setup uv
         uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Restore uv cache
+        uses: actions/cache@v4
         with:
-          python-version: "3.11"
+          path: |
+            ~/.cache/uv
+            .venv
+          key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
 
       - name: Create data/ and write Google OAuth files
         run: |
           mkdir -p data
-          echo "${{ secrets.GOOGLE_CLIENT_SECRET_JSON_B64 }}" | base64 -d > "$GOOGLE_OAUTH_CLIENT_SECRET_PATH"
-          echo "${{ secrets.GOOGLE_TOKEN_JSON_B64 }}" | base64 -d > "$GOOGLE_OAUTH_TOKEN_PATH"
+          echo "${{ secrets.GOOGLE_CLIENT_SECRET_JSON_B64 }}" | base64 -d > data/client_secret.json
+          echo "${{ secrets.GOOGLE_TOKEN_JSON_B64 }}" | base64 -d > data/token.json
 
       - name: Install deps (uv)
-        run: uv sync --frozen
+        run: uv sync --no-dev
 
       - name: Only run at 19:00 Europe/London
         id: gate
+        shell: bash
         run: |
           HOUR=$(TZ=Europe/London date +%H)
           echo "Local hour (Europe/London) is: $HOUR"
           if [ "$HOUR" != "19" ]; then
-            echo "not_time=true" >> $GITHUB_OUTPUT
+            echo "not_time=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run sync
+      - name: Run sync and capture log
         if: steps.gate.outputs.not_time != 'true'
+        shell: bash
         run: |
-          # Adjust to your entrypoint (root-level script):
-          uv run python gmail_process.py
+          set -euo pipefail
+          mkdir -p logs
+          TS=$(TZ=Europe/London date +'%Y-%m-%dT%H-%M-%S%z')
+          LOG="logs/sync_${TS}.log"
+          echo "== School Calendar Sync @ ${TS} ==" | tee "$LOG"
+          # run your script; capture both stdout and stderr
+          uv run python gmail_process.py 2>&1 | tee -a "$LOG"
+          # Optional: record exit status
+          echo "Exit status: ${PIPESTATUS[0]}" | tee -a "$LOG"
 
-      - name: Ensure failed_events.json exists
+      - name: Upload run logs
         if: always()
-        run: |
-          if [ ! -f "${FAILED_EVENTS_LOG}" ]; then
-            echo "[]" > "${FAILED_EVENTS_LOG}"
-          fi
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-logs
+          path: logs/*.log
+          if-no-files-found: ignore
 
-      - name: Upload failed_events.json
+      - name: Upload failed_events.json (if present)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: failed-events
-          path: ${{ env.FAILED_EVENTS_LOG }}
+          path: failed_events.json
+          if-no-files-found: ignore

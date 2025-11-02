@@ -17,6 +17,21 @@ This repository contains code that
 
 This workflow is triggered at 7pm every evening using GitHib Actions.
 
+## Setup
+
+The code assumes an `.env` file with the following:
+
+```
+GOOGLE_CLIENT_SECRET_PATH= ...
+GOOGLE_TOKEN_PATH= ...
+FAILED_EVENTS_LOG= ...
+OPENAI_API_KEY= ...
+GOOGLE_CALENDAR_ID= ...
+SCHOOL_EMAILS= ...
+```
+
+`SCHOOL_EMAILS` should be comma-separated.
+
 ## Manual run
 
 ```
