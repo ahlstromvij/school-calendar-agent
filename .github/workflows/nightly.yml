@@ -17,22 +17,19 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     env:
-      # App config
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
+      SCHOOL_EMAILS: ${{ secrets.SCHOOL_EMAILS }}
 
-      # Tell the script where the OAuth files are (you’ll write them in a step below)
       GOOGLE_OAUTH_CLIENT_SECRET_PATH: data/client_secret.json
       GOOGLE_OAUTH_TOKEN_PATH: data/token.json
 
-      # Where to store failure logs
       FAILED_EVENTS_LOG: data/failed_events.json
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Simpler uv setup with caching
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
