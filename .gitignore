@@ -1,0 +1,17 @@
+# Python things
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Secrets
+data/
+
+# uv artiifacts
+uv.lock
+
+# macOS
+.DS_Store
+
+# VSCode
+.vscode/

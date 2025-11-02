@@ -1,0 +1,21 @@
+[project]
+name = "school-calendar-agent"
+version = "0.1.0"
+description = "Flask-based school calendar agent"
+authors = [{ name = "Kristoffer Ahlstrom-Vij", email = "ahlstromvij@gmail.com" }]
+requires-python = ">=3.11"
+
+dependencies = [
+    "flask",
+    "google-auth",
+    "google-auth-oauthlib",
+    "google-auth-httplib2",
+    "google-api-python-client",
+    "python-dotenv",
+    "python-dateutil",
+    "certifi",
+    "openai"
+]
+
+[tool.uv]
+dev-dependencies = []
