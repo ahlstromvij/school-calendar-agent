@@ -4,8 +4,9 @@ __pycache__/
 .venv/
 .env
 
-# Secrets
+# Secrets and logs
 data/
+logs/
 
 # macOS
 .DS_Store

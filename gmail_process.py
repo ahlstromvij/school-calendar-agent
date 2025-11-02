@@ -20,7 +20,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")  # use "primary" if not set
 client = OpenAI()
 
-FAILED_EVENTS_LOG = os.getenv("FAILED_EVENTS_LOG", "failed_events.json")
+FAILED_EVENTS_LOG = os.getenv("FAILED_EVENTS_LOG", "logs/failed_events.json")
 
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]

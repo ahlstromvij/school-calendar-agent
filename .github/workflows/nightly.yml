@@ -23,67 +23,87 @@ jobs:
       PYTHONUNBUFFERED: "1"   # flush prints immediately (nice for live logs)
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v4
+    - name: Setup uv (fast Python)
+      uses: astral-sh/setup-uv@v4
 
-      - name: Restore uv cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/uv
-            .venv
-          key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
+    - name: Cache uv / venv
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/uv
+          .venv
+        key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+        restore-keys: |
+          uv-${{ runner.os }}-
 
-      - name: Create data/ and write Google OAuth files
-        run: |
-          mkdir -p data
-          echo "${{ secrets.GOOGLE_CLIENT_SECRET_JSON_B64 }}" | base64 -d > data/client_secret.json
-          echo "${{ secrets.GOOGLE_TOKEN_JSON_B64 }}" | base64 -d > data/token.json
+    - name: Create data/ and write Google OAuth files
+      run: |
+        mkdir -p data
+        echo "${{ secrets.GOOGLE_CLIENT_SECRET_JSON_B64 }}" | base64 -d > data/client_secret.json
+        echo "${{ secrets.GOOGLE_TOKEN_JSON_B64 }}" | base64 -d > data/token.json
 
-      - name: Install deps (uv)
-        run: uv sync --no-dev
+    - name: Install deps
+      run: uv sync --no-dev
 
-      - name: Only run at 19:00 Europe/London
-        id: gate
-        shell: bash
-        run: |
-          HOUR=$(TZ=Europe/London date +%H)
-          echo "Local hour (Europe/London) is: $HOUR"
-          if [ "$HOUR" != "19" ]; then
-            echo "not_time=true" >> "$GITHUB_OUTPUT"
-          fi
+    # Optional gate if you still want “hourly but only at 19:00”
+    - name: Only run at 19:00 Europe/London
+      id: gate
+      run: |
+        HOUR=$(TZ=Europe/London date +%H)
+        echo "Local hour (Europe/London) is: $HOUR"
+        if [ "$HOUR" != "19" ]; then
+          echo "not_time=true" >> $GITHUB_OUTPUT
+        fi
 
-      - name: Run sync and capture log
-        if: steps.gate.outputs.not_time != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p logs
-          TS=$(TZ=Europe/London date +'%Y-%m-%dT%H-%M-%S%z')
-          LOG="logs/sync_${TS}.log"
-          echo "== School Calendar Sync @ ${TS} ==" | tee "$LOG"
-          # run your script; capture both stdout and stderr
-          uv run python gmail_process.py 2>&1 | tee -a "$LOG"
-          # Optional: record exit status
-          echo "Exit status: ${PIPESTATUS[0]}" | tee -a "$LOG"
+    - name: Run sync and capture logs
+      if: steps.gate.outputs.not_time != 'true'
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
+        FAILED_EVENTS_LOG: logs/failed_events.json
+        SCHOOL_EMAILS: ${{ secrets.SCHOOL_EMAILS }} # if you're using this now
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p logs
+        TS=$(TZ=Europe/London date +'%Y-%m-%dT%H-%M-%S%z')
+        LOG="logs/sync_${TS}.log"
+        echo "== School Calendar Sync @ ${TS} ==" | tee "$LOG"
+        # Run your script; adjust path if needed
+        uv run python gmail_process.py 2>&1 | tee -a "$LOG"
+        echo "Exit status: ${PIPESTATUS[0]}" | tee -a "$LOG"
 
-      - name: Upload run logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sync-logs
-          path: logs/*.log
-          if-no-files-found: ignore
+        # Write a tiny JSON run summary your script can read/update if you want
+        # For now we’ll just create a placeholder
+        echo '{}' > logs/run_summary.json
 
-      - name: Upload failed_events.json (if present)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failed-events
-          path: failed_events.json
-          if-no-files-found: ignore
+    - name: List logs (debug)
+      if: always()
+      run: |
+        echo "Contents of logs/:"
+        ls -la logs || true
+        echo "failed_events.json (if exists):"
+        [ -f logs/failed_events.json ] && cat logs/failed_events.json || echo "none"
+
+    - name: Upload logs artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: sync-logs
+        path: logs/**
+        if-no-files-found: warn
+
+    - name: Job summary
+      if: always()
+      run: |
+        {
+          echo "## Nightly School Calendar Sync"
+          echo ""
+          echo "**When (Europe/London):** $(TZ=Europe/London date)"
+          echo ""
+          echo "**Artifacts:**"
+          echo "- Download the \`sync-logs\` artifact for full details (stdout & failed events)."
+        } >> "$GITHUB_STEP_SUMMARY"
