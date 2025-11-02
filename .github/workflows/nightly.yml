@@ -4,7 +4,6 @@ on:
   # Run hourly; the job itself checks "is it 19:00 in Europe/London?"
   schedule:
     - cron: "0 * * * *"
-  # Allow manual trigger
   workflow_dispatch: {}
 
 permissions:
@@ -18,38 +17,40 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     env:
-      # For the app at runtime
+      # App config
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
+
+      # Tell the script where the OAuth files are (you’ll write them in a step below)
+      GOOGLE_OAUTH_CLIENT_SECRET_PATH: data/client_secret.json
+      GOOGLE_OAUTH_TOKEN_PATH: data/token.json
+
+      # Where to store failure logs
+      FAILED_EVENTS_LOG: failed_events.json
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Simpler uv setup with caching
       - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-      - name: Restore uv cache
-        uses: actions/cache@v4
+        uses: astral-sh/setup-uv@v4
         with:
-          path: |
-            ~/.cache/uv
-            .venv
-          key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Create data/ and write Google OAuth files
         run: |
           mkdir -p data
-          echo "${{ secrets.GOOGLE_CLIENT_SECRET_JSON_B64 }}" | base64 -d > data/client_secret.json
-          echo "${{ secrets.GOOGLE_TOKEN_JSON_B64 }}" | base64 -d > data/token.json
+          echo "${{ secrets.GOOGLE_CLIENT_SECRET_JSON_B64 }}" | base64 -d > "$GOOGLE_OAUTH_CLIENT_SECRET_PATH"
+          echo "${{ secrets.GOOGLE_TOKEN_JSON_B64 }}" | base64 -d > "$GOOGLE_OAUTH_TOKEN_PATH"
 
       - name: Install deps (uv)
-        run: |
-          uv sync --no-dev
+        run: uv sync --frozen
 
       - name: Only run at 19:00 Europe/London
         id: gate
@@ -63,16 +64,19 @@ jobs:
       - name: Run sync
         if: steps.gate.outputs.not_time != 'true'
         run: |
-          # If your entrypoint is a module/file, adjust accordingly:
-          #   uv run python gmail_process.py
-          # or if you’ve set up a console script:
-          #   uv run school-calendar-agent
+          # Adjust to your entrypoint (root-level script):
           uv run python gmail_process.py
 
-      - name: Upload failed_events.json (if present)
+      - name: Ensure failed_events.json exists
+        if: always()
+        run: |
+          if [ ! -f "${FAILED_EVENTS_LOG}" ]; then
+            echo "[]" > "${FAILED_EVENTS_LOG}"
+          fi
+
+      - name: Upload failed_events.json
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: failed-events
-          path: failed_events.json
-          if-no-files-found: ignore
+          path: ${{ env.FAILED_EVENTS_LOG }}

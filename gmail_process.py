@@ -20,7 +20,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")  # use "primary" if not set
 client = OpenAI()
 
-FAILED_EVENTS_LOG = "failed_events.json"
+FAILED_EVENTS_LOG = os.getenv("FAILED_EVENTS_LOG", "failed_events.json")
 
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
@@ -53,7 +53,7 @@ def log_failed_event(event, error_msg):
         print(f"⚠️ Failed to log event error: {log_err}")
 
 
-def get_google_service(api_name, api_version)
+def get_google_service(api_name, api_version):
     token_path = os.getenv("GOOGLE_TOKEN_PATH", "token.json")
     client_secret_path = os.getenv("GOOGLE_CLIENT_SECRET_PATH", "client_secret.json")
 
@@ -281,6 +281,10 @@ def add_event_to_calendar(service, event):
 
 
 def main():
+    if not os.path.exists(FAILED_EVENTS_LOG):
+        with open(FAILED_EVENTS_LOG, "w", encoding="utf-8") as f:
+            json.dump([], f)
+
     gmail_service = get_google_service("gmail", "v1")
     calendar_service = get_google_service("calendar", "v3")
     emails = list_school_emails(gmail_service)
