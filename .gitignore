@@ -7,9 +7,6 @@ __pycache__/
 # Secrets
 data/
 
-# uv artiifacts
-uv.lock
-
 # macOS
 .DS_Store
 
