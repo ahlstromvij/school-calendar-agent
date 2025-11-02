@@ -26,7 +26,7 @@ jobs:
       GOOGLE_OAUTH_TOKEN_PATH: data/token.json
 
       # Where to store failure logs
-      FAILED_EVENTS_LOG: failed_events.json
+      FAILED_EVENTS_LOG: data/failed_events.json
 
     steps:
       - name: Checkout

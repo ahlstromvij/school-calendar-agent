@@ -26,13 +26,8 @@ GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 SCOPES = list(set(GMAIL_SCOPES + CALENDAR_SCOPES))  # unified auth
 
-SCHOOL_EMAILS = [
-    "prep@forest.org.uk",
-    "post@forest.schoolpostmail.co.uk",
-    "psoffice@forest.org.uk",
-    "StAubyns@mail.schoolbase.online",
-]
-
+raw_school_emails = os.getenv("SCHOOL_EMAILS", "").strip()
+SCHOOL_EMAILS = [email.strip() for email in raw_school_emails.split(",") if email.strip()]
 
 def log_failed_event(event, error_msg):
     entry = {
@@ -59,8 +54,25 @@ def get_google_service(api_name, api_version):
 
     creds = None
 
+    # Try to read token file robustly (handle dict or list)
     if os.path.exists(token_path):
-        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+        try:
+            with open(token_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # If file contains a list, try to pick the first dict-looking entry
+            if isinstance(data, list):
+                picked = None
+                for item in data:
+                    if isinstance(item, dict) and ("token" in item or "refresh_token" in item or "access_token" in item):
+                        picked = item
+                        break
+                if picked is None and len(data) == 1 and isinstance(data[0], dict):
+                    picked = data[0]
+                data = picked or {}
+            if isinstance(data, dict) and data:
+                creds = Credentials.from_authorized_user_info(data, SCOPES)
+        except Exception:
+            creds = None
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -73,8 +85,10 @@ def get_google_service(api_name, api_version):
             flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
             creds = flow.run_local_server(port=0)
 
-        os.makedirs(os.path.dirname(token_path), exist_ok=True)
-        with open(token_path, "w") as token_file:
+        dirpath = os.path.dirname(token_path)
+        if dirpath:
+            os.makedirs(dirpath, exist_ok=True)
+        with open(token_path, "w", encoding="utf-8") as token_file:
             token_file.write(creds.to_json())
 
     return build(api_name, api_version, credentials=creds)
