@@ -25,6 +25,7 @@ jobs:
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
+      SCHOOL_EMAILS: ${{ secrets.SCHOOL_EMAILS }}
       FAILED_EVENTS_LOG: logs/failed_events.json
 
     steps:
