@@ -1,8 +1,8 @@
 from __future__ import print_function
 import os
-import base64
 import json
 import re
+import base64
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
@@ -21,6 +21,7 @@ CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")  # use "primary" if not
 client = OpenAI()
 
 FAILED_EVENTS_LOG = os.getenv("FAILED_EVENTS_LOG", "logs/failed_events.json")
+PROCESSED_LABEL_NAME = "SCHOOL-PROCESSED"
 
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
@@ -94,6 +95,20 @@ def get_google_service(api_name, api_version):
     return build(api_name, api_version, credentials=creds)
 
 
+def get_or_create_label(service, name):
+    """Return labelId for `name`, creating it if missing."""
+    user_id = "me"
+    labels = service.users().labels().list(userId=user_id).execute().get("labels", [])
+    for lab in labels:
+        if lab["name"] == name:
+            return lab["id"]
+    created = service.users().labels().create(
+        userId=user_id,
+        body={"name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
+    ).execute()
+    return created["id"]
+
+
 def extract_plain_text_body(payload):
     parts = payload.get("parts", [])
     if parts:
@@ -103,17 +118,52 @@ def extract_plain_text_body(payload):
     return base64.urlsafe_b64decode(payload.get("body", {}).get("data", b"")).decode()
 
 
-def list_school_emails(service):
-    results = service.users().messages().list(userId="me", labelIds=["INBOX"]).execute()
-    messages = results.get("messages", [])
-    emails = []
-    for msg in messages:
-        msg_data = service.users().messages().get(userId="me", id=msg["id"]).execute()
-        from_header = next((h["value"] for h in msg_data["payload"]["headers"] if h["name"] == "From"), "")
-        if any(sender in from_header for sender in SCHOOL_EMAILS):
-            body = extract_plain_text_body(msg_data["payload"])
-            emails.append({"id": msg["id"], "body": body})
-    return emails
+def list_school_emails(service, days=60, include_only_inbox=True, max_results_per_page=500):
+    """
+    Return full Gmail messages for the target senders within the last `days`.
+    Handles correct OR query and paginates through all result pages.
+    """
+    if not SCHOOL_EMAILS:
+        return []
+
+    # Build a single OR-based query so Gmail matches any of the senders.
+    # Example: from:(a@x.com OR b@y.com) newer_than:60d label:inbox
+    senders_or = " OR ".join(SCHOOL_EMAILS)
+    q_parts = [f"from:({senders_or})", f"newer_than:{days}d"]
+    if include_only_inbox:
+        q_parts.append("label:inbox")
+    # Exclude already processed messages
+    q_parts.append(f"-label:{PROCESSED_LABEL_NAME}")
+    q = " ".join(q_parts)
+
+    user_id = "me"
+    messages = []
+    page_token = None
+
+    while True:
+        list_kwargs = {
+            "userId": user_id,
+            "q": q,
+            "maxResults": max_results_per_page,
+        }
+        if page_token:
+            list_kwargs["pageToken"] = page_token
+
+        resp = service.users().messages().list(**list_kwargs).execute()
+        ids = resp.get("messages", [])
+        if not ids:
+            break
+
+        # Fetch each message in 'full' so you have headers and payload
+        for m in ids:
+            msg = service.users().messages().get(userId=user_id, id=m["id"], format="full").execute()
+            messages.append(msg)
+
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+
+    return messages
 
 
 def normalize_event(event_dict):
@@ -301,13 +351,18 @@ def main():
 
     gmail_service = get_google_service("gmail", "v1")
     calendar_service = get_google_service("calendar", "v3")
+    # Ensure the processed label exists and capture its ID
+    processed_label_id = get_or_create_label(gmail_service, PROCESSED_LABEL_NAME)
+    
     emails = list_school_emails(gmail_service)
     print(f"📩 Found {len(emails)} school emails\n")
 
     summary = {"added": 0, "skipped": 0, "no_event": 0, "parse_error": 0, "error": 0}
 
     for idx, email in enumerate(emails, 1):
-        event = extract_event_from_email(email["body"])
+        # Decode the email body to plain text for extraction
+        email_text = extract_plain_text_body(email.get("payload", {})) or email.get("snippet", "")
+        event = extract_event_from_email(email_text)
 
         if isinstance(event, dict):
             print(f"📬 Email {idx}: Event extracted → {event['event_name']}")
@@ -318,9 +373,27 @@ def main():
                 summary["added"] += 1
             else:
                 summary["error"] += 1
+            # Mark email as processed
+            try:
+                gmail_service.users().messages().modify(
+                    userId="me",
+                    id=email["id"],
+                    body={"addLabelIds": [processed_label_id], "removeLabelIds": []},
+                ).execute()
+            except Exception as e:
+                print(f"⚠️ Could not label message as processed: {e}")
         elif event == "no_event":
             print(f"ℹ️ Email {idx}: No event found.")
             summary["no_event"] += 1
+            # Also mark as processed so we don't re-check it every run
+            try:
+                gmail_service.users().messages().modify(
+                    userId="me",
+                    id=email["id"],
+                    body={"addLabelIds": [processed_label_id], "removeLabelIds": []},
+                ).execute()
+            except Exception as e:
+                print(f"⚠️ Could not label message as processed: {e}")
         elif event == "parse_error":
             print(f"⚠️ Email {idx}: JSON parsing failed.")
             summary["parse_error"] += 1
