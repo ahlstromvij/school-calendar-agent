@@ -57,8 +57,8 @@ jobs:
       - name: Write Google OAuth files
         run: |
           mkdir -p data
-          echo "${{ secrets.GOOGLE_CLIENT_SECRET_JSON_B64 }}" | base64 -d > data/client_secret.json
-          echo "${{ secrets.GOOGLE_TOKEN_JSON_B64 }}" | base64 -d > data/token.json
+          echo "${{ secrets.GOOGLE_CLIENT_SECRET_JSON_B64 }}" | base64 -d > client_secret.json
+          echo "${{ secrets.GOOGLE_TOKEN_JSON_B64 }}" | base64 -d > token.json
 
       - name: Install deps (uv)
         run: uv sync --no-dev
