@@ -1,0 +1,49 @@
+name: Sonatype SCA (OSS Index)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  oss-index:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync deps (no dev) and freeze
+        run: |
+          uv sync --no-dev
+          uv pip freeze > requirements.txt
+
+      - name: Build purl coordinates
+        run: |
+          python - << 'PY'
+          import re, sys
+          coords = []
+          with open("requirements.txt") as f:
+            for line in f:
+              line = line.strip()
+              if not line or line.startswith("#"): continue
+              m = re.match(r"^([A-Za-z0-9_.\-]+)==([A-Za-z0-9_.\-+]+)$", line)
+              if not m: 
+                continue
+              name, ver = m.group(1), m.group(2)
+              coords.append(f"pkg:pypi/{name.lower()}@{ver}")
+          with open("coords.txt","w") as out:
+            out.write("\n".join(coords) + ("\n" if coords else ""))
+          print(f"Wrote {len(coords)} coordinates to coords.txt")
+          PY
+
+      - name: Scan with OSS Index API
+        run: |
+          python .github/scripts/ossindex_scan.py coords.txt
