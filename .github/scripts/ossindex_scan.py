@@ -56,7 +56,11 @@ def main():
             data = post_batch(batch, auth)
         except error.HTTPError as e:
             msg = e.read().decode("utf-8", errors="ignore")
-            print(f"HTTP {e.code}: {msg}", file=sys.stderr)
+            if e.code == 401:
+                print("HTTP 401 Unauthorized: OSS Index now requires credentials. "
+                      "Set repo secrets SONATYPE_OSS_INDEX_USERNAME and SONATYPE_OSS_INDEX_TOKEN.", file=sys.stderr)
+            else:
+                print(f"HTTP {e.code}: {msg}", file=sys.stderr)
             sys.exit(1)
         except Exception as e:
             print(f"Request error: {e}", file=sys.stderr)

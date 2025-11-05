@@ -28,14 +28,15 @@ jobs:
       - name: Build purl coordinates
         run: |
           python - << 'PY'
-          import re, sys
+          import re
           coords = []
           with open("requirements.txt") as f:
             for line in f:
               line = line.strip()
-              if not line or line.startswith("#"): continue
+              if not line or line.startswith("#"):
+                continue
               m = re.match(r"^([A-Za-z0-9_.\-]+)==([A-Za-z0-9_.\-+]+)$", line)
-              if not m: 
+              if not m:
                 continue
               name, ver = m.group(1), m.group(2)
               coords.append(f"pkg:pypi/{name.lower()}@{ver}")
@@ -45,5 +46,8 @@ jobs:
           PY
 
       - name: Scan with OSS Index API
+        env:
+          OSSINDEX_USERNAME: ${{ secrets.SONATYPE_OSS_INDEX_USERNAME }}
+          OSSINDEX_TOKEN: ${{ secrets.SONATYPE_OSS_INDEX_TOKEN }}
         run: |
           python .github/scripts/ossindex_scan.py coords.txt
