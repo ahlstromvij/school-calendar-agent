@@ -34,7 +34,7 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Scan with Sonatype OSS Index
-        uses: sonatype/ossindex-github-action@main
+        uses: sonatype-nexus-community/ossindex-github-action@main
         with:
           coordinates: ${{ steps.coords.outputs.coordinates }}
           # auditignore: .ossindex/auditignore  # optional ignore file
