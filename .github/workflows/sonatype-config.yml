@@ -1,0 +1,33 @@
+name: Sonatype SCA (OSS Index)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  oss-index:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync deps (no dev) and export lock
+        run: |
+          uv sync --no-dev
+          uv pip freeze > requirements.txt
+
+      - name: Scan with Sonatype OSS Index
+        uses: sonatype/actions/oss-index@v1
+        with:
+          scan-targets: |
+            requirements.txt
+          # auditignore: .ossindex/auditignore   # optional ignore file
