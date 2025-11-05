@@ -20,14 +20,22 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Sync deps (no dev) and export lock
+      - name: Sync deps (no dev)
+        run: uv sync --no-dev
+
+      - name: Export pinned deps and build OSS Index coordinates
+        id: coords
+        shell: bash
         run: |
-          uv sync --no-dev
           uv pip freeze > requirements.txt
+          awk -F'==' 'NF==2 { printf "pkg:pypi/%s@%s\n", tolower($1), $2 }' requirements.txt > coords.txt
+          echo "coordinates<<EOF" >> "$GITHUB_OUTPUT"
+          cat coords.txt >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Scan with Sonatype OSS Index
-        uses: sonatype/actions/oss-index@v1
+        uses: sonatype/ossindex-github-action@main
         with:
-          scan-targets: |
-            requirements.txt
-          # auditignore: .ossindex/auditignore   # optional ignore file
+          coordinates: ${{ steps.coords.outputs.coordinates }}
+          # auditignore: .ossindex/auditignore  # optional ignore file
+
