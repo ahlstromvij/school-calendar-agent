@@ -2,15 +2,8 @@ name: Nightly School Calendar Sync
 
 on:
   schedule:
-    - cron: "0 18,19 * * *"   # trigger at 18:00 and 19:00 UTC; gate below to hit 19:00 Europe/London
-  workflow_dispatch:
-    inputs:
-      force_run:
-        description: "Run immediately (ignore 19:00 gate)?"
-        required: false
-        default: "false"
-        type: choice
-        options: ["false", "true"]
+    - cron: "0 19 * * *"   # once daily at 19:00 UTC
+  workflow_dispatch:       # manual trigger
 
 permissions:
   contents: read
@@ -47,13 +40,12 @@ jobs:
           restore-keys: |
             uv-${{ runner.os }}-
 
-      - name: Prepare logs directory (always)
+      - name: Prepare logs directory
         run: |
-          mkdir -p logs
-          TS=$(TZ=Europe/London date +'%Y-%m-%dT%H-%M-%S%z')
-          echo "Run started at ${TS}" | tee "logs/run_info.txt"
-          # create a placeholder so artifacts never warn
-          touch logs/.keep
+            mkdir -p logs
+            TS=$(TZ=Europe/London date +'%Y-%m-%dT%H-%M-%S%z')
+            echo "Run started at ${TS}" | tee "logs/run_info.txt"
+            touch logs/.keep
 
       - name: Write Google OAuth files
         run: |
@@ -64,38 +56,13 @@ jobs:
       - name: Install deps (uv)
         run: uv sync --no-dev
 
-      - name: Only run at 19:00 Europe/London unless forced
-        id: gate
-        run: |
-          FORCE="${{ github.event.inputs.force_run || 'false' }}"
-          HOUR=$(TZ=Europe/London date +%H)
-          echo "Local hour (Europe/London): ${HOUR}" | tee -a logs/run_info.txt
-          echo "force_run: ${FORCE}" | tee -a logs/run_info.txt
-          if [ "${FORCE}" = "true" ]; then
-            echo "not_time=false" >> $GITHUB_OUTPUT
-            echo "Gate bypassed by manual input." | tee -a logs/run_info.txt
-            exit 0
-          fi
-          if [ "$HOUR" != "19" ]; then
-            echo "not_time=true" >> $GITHUB_OUTPUT
-            echo "Skipped: not 19:00 (gate active)." | tee -a logs/run_info.txt
-          else
-            echo "not_time=false" >> $GITHUB_OUTPUT
-            echo "Proceeding: it is 19:00." | tee -a logs/run_info.txt
-          fi
-
       - name: Run sync
-        if: steps.gate.outputs.not_time != 'true'
         run: |
           TS=$(TZ=Europe/London date +'%Y-%m-%dT%H-%M-%S%z')
           LOG="logs/sync_${TS}.log"
           echo "== Sync @ ${TS} ==" | tee -a "$LOG"
-          # Run your script; capture stdout/stderr to the log
           uv run python gmail_process.py 2>&1 | tee -a "$LOG"
-          # If your code didn’t write a failed_events.json, create an empty one
-          if [ ! -f "logs/failed_events.json" ]; then
-            echo "[]" > logs/failed_events.json
-          fi
+          [ -f "logs/failed_events.json" ] || echo "[]" > logs/failed_events.json
 
       - name: Upload logs artifact (always)
         if: always()
