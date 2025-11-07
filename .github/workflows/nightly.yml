@@ -2,7 +2,7 @@ name: Nightly School Calendar Sync
 
 on:
   schedule:
-    - cron: "0 * * * *"   # hourly; we'll gate below
+    - cron: "0 18,19 * * *"   # trigger at 18:00 and 19:00 UTC; gate below to hit 19:00 Europe/London
   workflow_dispatch:
     inputs:
       force_run:
