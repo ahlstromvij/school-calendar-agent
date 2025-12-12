@@ -4,6 +4,7 @@ import json
 import re
 import base64
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -22,6 +23,7 @@ client = OpenAI()
 
 FAILED_EVENTS_LOG = os.getenv("FAILED_EVENTS_LOG", "logs/failed_events.json")
 PROCESSED_LABEL_NAME = "SCHOOL-PROCESSED"
+LOCAL_TZ = os.getenv("LOCAL_TZ", "Europe/London")  # used for event times
 
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
@@ -218,62 +220,119 @@ def extract_event_from_email(email_text):
 
 
 def parse_event_datetime(event):
-    """Return start, end, and whether to use dateTime for Google Calendar."""
+    """
+    Return (start_iso, end_iso, use_datetime).
+    - Understands '1pm', '1:30pm', '1.30pm', '1–2pm', '1:15-2:45 pm', 'noon', 'midnight'.
+    - Applies Europe/London (configurable via LOCAL_TZ) and includes offset in ISO string.
+    - For all-day events, returns date-only strings.
+    """
     if not event.get("date"):
         return None, None, False
 
-    date_str = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", event["date"].strip())
-    
+    # Parse the date (strip ordinals like 1st/2nd)
+    date_str = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", event["date"].strip(), flags=re.IGNORECASE)
     try:
-        dt = dateparser.parse(date_str, fuzzy=True)
-        start_date = dt.date().isoformat()
+        base_date = dateparser.parse(date_str, fuzzy=True).date()
     except Exception:
         print(f"⚠️ Could not parse date: {event['date']}")
         return None, None, False
 
-    use_datetime = False
+    tz = ZoneInfo(LOCAL_TZ)
+    tstr = (event.get("time") or "").strip()
+    # Remove notes in parentheses
+    tstr = re.sub(r"\(.*?\)", "", tstr, flags=re.DOTALL).strip()
+    low = tstr.lower()
 
-    time_str = event.get("time", "").strip().lower()
-    time_str = re.sub(r"\(.*?\)", "", time_str).strip()  # remove parenthetical notes
+    # All-day hints
+    if not low or any(x in low for x in ["all day", "tbc", "to be confirmed"]):
+        start = base_date.isoformat()
+        end = (base_date + timedelta(days=1)).isoformat()
+        return start, end, False
 
-    if time_str:
-        # Handle common vague times
-        if "end of day" in time_str:
-            start_time = "17:00"
-            end_time = "18:00"
-        elif "approx" in time_str or "around" in time_str:
-            times = re.findall(r"(\d{1,2}:\d{2})", time_str)
-            if times:
-                start_time = times[0]
-                end_time = (datetime.strptime(start_time, "%H:%M") + timedelta(hours=1)).strftime("%H:%M")
-            else:
-                start_time = "17:00"
-                end_time = "18:00"
-        else:
-            # Extract start/end if given in HH:MM format
-            times = re.findall(r"(\d{1,2}:\d{2})", time_str)
-            if times:
-                start_time = times[0]
-                end_time = times[1] if len(times) > 1 else (datetime.strptime(start_time, "%H:%M") + timedelta(hours=1)).strftime("%H:%M")
-            else:
-                start_time = "17:00"
-                end_time = "18:00"
+    # Normalize common words
+    low = low.replace("midday", "noon")
+    # Build helpers
+    def token_to_hm(tok: str, default_meridiem: str | None = None):
+        tok = tok.strip().lower()
+        tok = tok.replace("a.m.", "am").replace("p.m.", "pm").replace("a.m", "am").replace("p.m", "pm")
+        tok = tok.replace(" ", "")
+        tok = tok.replace("–", "-").replace("—", "-")
+        tok = tok.replace(".", ":")  # 1.30pm -> 1:30pm
+        if tok in ("noon",):
+            return 12, 0, "pm"
+        if tok in ("midnight",):
+            return 0, 0, "am"
+        m = re.match(r"^(\d{1,2})(?::(\d{2}))?(am|pm)?$", tok)
+        if not m:
+            # 24h like 13:00 or 0900
+            m24 = re.match(r"^(\d{1,2}):?(\d{2})$", tok)
+            if m24:
+                h = int(m24.group(1)); mi = int(m24.group(2))
+                return h, mi, None
+            return None
+        h = int(m.group(1))
+        mi = int(m.group(2) or 0)
+        mer = (m.group(3) or default_meridiem)
+        return h, mi, mer
 
-        start = f"{start_date}T{start_time}:00Z"
-        end = f"{start_date}T{end_time}:00Z"
-        use_datetime = True
+    # Extract possible range "t1 - t2"
+    range_re = re.compile(
+        r"(?i)\b(from\s+)?(?P<t1>(?:noon|midnight|\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?))\s*(?:to|-|–|—)\s*(?P<t2>(?:noon|midnight|\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?))\b"
+    )
+    single_re = re.compile(r"(?i)\b(noon|midnight|\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?)\b")
+
+    start_hm = end_hm = None
+    m = range_re.search(tstr)
+    if m:
+        t1 = m.group("t1")
+        t2 = m.group("t2")
+        # If only second has am/pm, propagate to first
+        mer2 = re.search(r"(?i)am|pm|a\.m\.|p\.m\.", t2)
+        default_mer = None
+        if mer2:
+            default_mer = "am" if "a" in mer2.group(0).lower() else "pm"
+        start_hm = token_to_hm(t1, default_mer)
+        end_hm = token_to_hm(t2, default_mer)
     else:
-        # All-day event
-        start = start_date
-        end = (dt.date() + timedelta(days=1)).isoformat()
-        use_datetime = False
+        # Look for any single time token
+        m2 = single_re.search(tstr)
+        if m2:
+            start_hm = token_to_hm(m2.group(1))
 
-    # Safety: ensure start != end
-    if start == end:
-        end = (dt + timedelta(hours=1)).isoformat() + "Z"
-        use_datetime = True
+    # If still nothing usable, default to 17:00-18:00
+    if not start_hm:
+        start_hm = (17, 0, None)
+    if not end_hm and start_hm:
+        # default 1 hour duration
+        sh, sm, smer = start_hm
+        end_hm = (sh, sm, smer)
+        # compute end by adding 1 hour after conversion below
 
-    return start, end, use_datetime
+    def to_24h(h, mi, mer):
+        if mer:
+            mer = mer.lower()
+            if h == 12 and mer == "am":
+                h = 0
+            elif h != 12 and mer == "pm":
+                h += 12
+        # no meridiem => assume 24h if h >= 0
+        return h, mi
+
+    sh, sm, smer = start_hm
+    eh, em, emer = end_hm
+    # Propagate meridiem end->start if start missing
+    if smer is None and emer is not None:
+        smer = emer
+    sh, sm = to_24h(sh, sm, smer)
+    eh, em = to_24h(eh, em, emer)
+
+    start_dt = datetime.combine(base_date, datetime.min.time()).replace(tzinfo=tz).replace(hour=sh, minute=sm, second=0, microsecond=0)
+    end_dt = datetime.combine(base_date, datetime.min.time()).replace(tzinfo=tz).replace(hour=eh, minute=em, second=0, microsecond=0)
+    # If end <= start, assume it was a range like "1–2pm" parsed ok; if equal (single token), add 1 hour
+    if end_dt <= start_dt:
+        end_dt = start_dt + timedelta(hours=1)
+
+    return start_dt.isoformat(), end_dt.isoformat(), True
 
 
 def similar(a, b):
